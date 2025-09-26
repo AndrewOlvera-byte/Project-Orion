@@ -1,0 +1,101 @@
+version: "3.9"
+name: orion-dev
+services:
+  mysql:
+    image: mysql:8.0
+    command: --default-authentication-plugin=mysql_native_password --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  chromadb:
+    image: ghcr.io/chroma-core/chroma:latest
+    environment:
+      - IS_PERSISTENT=TRUE
+      - ALLOW_RESET=TRUE
+    ports:
+      - "8003:8000"
+    volumes:
+      - chroma_data:/chroma/.chroma/index
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/heartbeat"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  django:
+    build:
+      context: ./services/django
+      dockerfile: Dockerfile
+    command: ["/bin/bash", "./entrypoint.sh", "dev"]
+    env_file:
+      - ./.env.dev
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      chromadb:
+        condition: service_healthy
+    volumes:
+      - ./services/django:/app
+    ports:
+      - "8001:8000"
+
+  fastapi:
+    build:
+      context: ./services/fastapi
+      dockerfile: Dockerfile
+    command: ["/bin/bash", "./entrypoint.sh", "dev"]
+    env_file:
+      - ./.env.dev
+    depends_on:
+      redis:
+        condition: service_healthy
+      chromadb:
+        condition: service_started
+    volumes:
+      - ./services/fastapi:/app
+    ports:
+      - "8002:8000"
+
+  frontend:
+    build:
+      context: ./services/frontend
+      dockerfile: Dockerfile.dev
+    env_file:
+      - ./.env.dev
+    volumes:
+      - ./services/frontend:/app
+      - /app/node_modules
+    ports:
+      - "5173:5173"
+    depends_on:
+      - django
+      - fastapi
+
+volumes:
+  mysql_data:
+  chroma_data:
+
